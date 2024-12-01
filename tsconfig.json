@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "strict": true,
+        // "target": "ES2019",
+        "target": "ESNext",
+        "esModuleInterop": true,
+        "baseUrl": "./src",
+        "paths": {
+            "@/*": ["*"]
+        },
+        "moduleResolution": "node"
+    },
+    "include": ["src/**/*.ts", "prisma/**/*.ts", "prisma/*.ts"],
+    "exclude": ["node_modules"]
+}
