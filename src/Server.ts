@@ -4,6 +4,7 @@ import { Server as SocketIOServer } from "socket.io";
 import ApiConfig from "./config/api.config";
 import AppRouter from "./routes/appRouter";
 import { getMessages, sendMessage } from "@/services/chat";
+import os from "os";
 
 export default class Server {
     private readonly app: Express;
@@ -14,7 +15,7 @@ export default class Server {
 
     constructor(apiConfig: ApiConfig) {
         if (!apiConfig.port) {
-            throw new Error("El puerto no está definido en ApiConfig.");
+            throw new Error("The port is not defined in ApiConfig.");
         }
 
         this.app = express();
@@ -35,11 +36,20 @@ export default class Server {
 
     private setupWebSocketHandlers(): void {
         this.io.on("connection", (socket) => {
-            socket.on("disconect", () => {
-                console.log("Usuario desconectado");
+            console.log("User connected:", socket.id);
+
+            socket.on("register_user", (userId) => {
+                const userRoom = `user:${userId}`;
+                socket.join(userRoom);
+                console.log(`User ${userId} joined room ${userRoom}`);
             });
 
+            // Join a specific chat room
             socket.on("load_messages", async (chatId) => {
+                const chatRoom = `chat:${chatId}`;
+                socket.join(chatRoom);
+                console.log(`Socket ${socket.id} joined room ${chatRoom}`);
+
                 try {
                     const messages = await getMessages(chatId);
                     const formattedMessages = messages.map((message) => ({
@@ -52,13 +62,21 @@ export default class Server {
                             avatar: message.sender.profilePicture,
                         },
                     }));
+
+                    // Send messages only to the user who requested them
                     socket.emit("load_messages", formattedMessages);
                 } catch (error) {
-                    console.error("Error al cargar mensajes:", error);
+                    console.error("Error when loading messages:", error);
                 }
             });
 
+            // Handle sending a chat message
             socket.on("chat_message", async (msg) => {
+                const chatRoom = `chat:${msg.chatId}`;
+                console.log(
+                    `Message from ${msg.senderId} to chat room ${chatRoom}: ${msg.content}`
+                );
+
                 try {
                     const message = await sendMessage(
                         msg.senderId,
@@ -77,9 +95,21 @@ export default class Server {
                         },
                     };
 
-                    this.io.emit("chat_message", formattedMessage);
-                } catch (error: any) {
-                    console.error("Error al enviar mensaje:", error);
+                    // Emit the message to the chat room
+                    this.io.to(chatRoom).emit("chat_message", formattedMessage);
+
+                    // Notify both users to update their chat list
+                    const senderRoom = `user:${msg.senderId}`;
+                    const receiverRoom = `user:${msg.receiverId}`;
+                    this.io
+                        .to(senderRoom)
+                        .to(receiverRoom)
+                        .emit("chat_updated", {
+                            chatId: msg.chatId,
+                            lastMessage: formattedMessage,
+                        });
+                } catch (error) {
+                    console.error("Error when sending message:", error);
                 }
             });
         });
@@ -93,14 +123,19 @@ export default class Server {
         return new Promise((resolve, reject) => {
             this.httpServer
                 .listen(this.apiConfig.port, () => {
+                    const interfaces = os.networkInterfaces();
+                    const address =
+                        interfaces["en0"]?.find((x) => x.family === "IPv4")
+                            ?.address || "192.168.0.3";
                     console.info(
-                        `Server is running on port ${this.apiConfig.port}\n`
+                        // `Server is running on port ${this.apiConfig.port}\n`
+                        `Server is running on http://${address}:${this.apiConfig.port}`
                     );
                     console.info("Press CTRL-C to stop\n");
                     resolve();
                 })
                 .on("error", (error) => {
-                    console.error("Error al iniciar el servidor:", error);
+                    console.error("Error when starting server:", error);
                     reject(error);
                 });
         });
