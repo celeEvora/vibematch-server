@@ -89,6 +89,21 @@ export async function sendMessage(
             senderId,
             content,
         },
+        select: {
+            id: true,
+            chatId: true,
+            senderId: true,
+            content: true,
+            createdAt: true,
+            sender: {
+                select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    profilePicture: true,
+                },
+            },
+        },
     });
 
     // Update the chat to have the last message id
