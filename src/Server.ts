@@ -4,6 +4,7 @@ import { Server as SocketIOServer } from "socket.io";
 import ApiConfig from "./config/api.config";
 import AppRouter from "./routes/appRouter";
 import { getMessages, sendMessage } from "@/services/chat";
+import { likeUser } from "./services/matches";
 import os from "os";
 
 export default class Server {
@@ -44,35 +45,67 @@ export default class Server {
                 console.log(`User ${userId} joined room ${userRoom}`);
             });
 
-            // Join a specific chat room
-            socket.on("load_messages", async (chatId) => {
-                const chatRoom = `chat:${chatId}`;
-                socket.join(chatRoom);
-                console.log(`Socket ${socket.id} joined room ${chatRoom}`);
-
+            socket.on("like_user", async ({ fromUserId, toUserId, isLike }) => {
                 try {
-                    const messages = await getMessages(chatId);
-                    const formattedMessages = messages.map((message) => ({
-                        _id: message.id,
-                        text: message.content,
-                        createdAt: message.createdAt,
-                        user: {
-                            _id: message.senderId,
-                            name: `${message.sender.firstName} ${message.sender.lastName}`,
-                            avatar: message.sender.profilePicture,
-                        },
-                    }));
+                    const result = await likeUser(fromUserId, toUserId, isLike);
 
-                    // Send messages only to the user who requested them
-                    socket.emit("load_messages", formattedMessages);
+                    const userRoom = `user:${toUserId}`;
+                    if (isLike === true) {
+                        socket.to(userRoom).emit("like_notification", {
+                            fromUserId,
+                            message: "Someone liked you!",
+                        });
+                    }
+
+                    socket.emit("like_user_response", {
+                        success: true,
+                        result,
+                    });
                 } catch (error) {
-                    console.error("Error when loading messages:", error);
+                    console.error("Error when liking user:", error);
+                    socket.emit("like_user_response", {
+                        success: false,
+                        error: (error as any).message,
+                    });
                 }
             });
 
+            // Join a specific chat room
+            socket.on(
+                "load_messages",
+                async ({ chatId, senderId, receiverId }) => {
+                    // const chatRoom = `chat:${chatId}`;
+                    const chatRoom = this.getRoomId(senderId, receiverId);
+
+                    socket.join(chatRoom);
+                    console.log(`Socket ${socket.id} joined room ${chatRoom}`);
+
+                    try {
+                        const messages = await getMessages(chatId);
+                        const formattedMessages = messages.map((message) => ({
+                            _id: message.id,
+                            text: message.content,
+                            createdAt: message.createdAt,
+                            user: {
+                                _id: message.senderId,
+                                name: `${message.sender.firstName} ${message.sender.lastName}`,
+                                avatar: message.sender.profilePicture,
+                            },
+                        }));
+
+                        // Send messages only to the user who requested them
+                        socket.emit("load_messages", formattedMessages);
+                    } catch (error) {
+                        console.error("Error when loading messages:", error);
+                    }
+                }
+            );
+
             // Handle sending a chat message
             socket.on("chat_message", async (msg) => {
-                const chatRoom = `chat:${msg.chatId}`;
+                // const chatRoom = `chat:${msg.chatId}`;
+                const chatRoom = this.getRoomId(msg.senderId, msg.receiverId);
+
                 console.log(
                     `Message from ${msg.senderId} to chat room ${chatRoom}: ${msg.content}`
                 );
@@ -98,9 +131,17 @@ export default class Server {
                     // Emit the message to the chat room
                     this.io.to(chatRoom).emit("chat_message", formattedMessage);
 
+                    // Emit a notification to the receiver
+                    const receiverRoom = `user:${msg.receiverId}`;
+                    this.io.to(receiverRoom).emit("message_notification", {
+                        fromUserId: msg.senderId,
+                        content: msg.content,
+                        createdAt: message.createdAt,
+                    });
+
                     // Notify both users to update their chat list
                     const senderRoom = `user:${msg.senderId}`;
-                    const receiverRoom = `user:${msg.receiverId}`;
+                    // const receiverRoom = `user:${msg.receiverId}`;
                     this.io
                         .to(senderRoom)
                         .to(receiverRoom)
@@ -113,6 +154,10 @@ export default class Server {
                 }
             });
         });
+    }
+
+    private getRoomId(userId1: string, userId2: string): string {
+        return [userId1, userId2].sort().join(":");
     }
 
     async start(): Promise<void> {

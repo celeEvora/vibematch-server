@@ -272,6 +272,7 @@ export async function getMatchesForUser(userId: number) {
                 select: {
                     id: true,
                     firstName: true,
+                    lastName: true,
                     profilePicture: true,
                 },
             },
